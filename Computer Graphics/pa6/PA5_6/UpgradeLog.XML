@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?><?xml-stylesheet type='text/xsl' href='_UpgradeReport_Files/UpgradeReport.xslt'?><UpgradeLog>
+<Properties><Property Name="Solution" Value="testMyGL">
+</Property><Property Name="솔루션 파일" Value="C:\Users\kim\Documents\PA5_6\testMyGL.sln">
+</Property><Property Name="사용자 옵션 파일" Value="C:\Users\kim\Documents\PA5_6\testMyGL.suo">
+</Property><Property Name="Date" Value="2014년 5월 25일 일요일">
+</Property><Property Name="Time" Value="오후 21:08">
+</Property></Properties><Event ErrorLevel="0" Project="" Source="testMyGL.sln" Description="파일을 C:\Users\kim\Documents\PA5_6\testMyGL.sln.old(으)로 백업했습니다.">
+</Event><Event ErrorLevel="0" Project="" Source="testMyGL.suo" Description="파일을 C:\Users\kim\Documents\PA5_6\testMyGL.suo.old(으)로 백업했습니다.">
+</Event><Event ErrorLevel="0" Project="testMyGL" Source="testMyGL\testMyGL.vcproj" Description="Converting project file 'C:\Users\kim\Documents\PA5_6\testMyGL\testMyGL.vcproj'.">
+</Event><Event ErrorLevel="1" Project="testMyGL" Source="testMyGL\testMyGL.vcproj" Description="This application has been updated to include settings related to the User Account Control (UAC) feature of Windows Vista. By default, when run on Windows Vista with UAC enabled, this application is marked to run with the same privileges as the process that launched it. This marking also disables the application from running with virtualization. You can change UAC related settings from the Property Pages of the project.">
+</Event><Event ErrorLevel="1" Project="testMyGL" Source="testMyGL\testMyGL.vcproj" Description="VCWebServiceProxyGeneratorTool is no longer supported. The tool has been removed from your project settings.">
+</Event><Event ErrorLevel="1" Project="testMyGL" Source="testMyGL\testMyGL.vcproj" Description="Attribute 'Detect64BitPortabilityProblems' of 'VCCLCompilerTool' is not supported in this version and has been removed during conversion.">
+</Event><Event ErrorLevel="0" Project="testMyGL" Source="testMyGL\testMyGL.vcproj" Description="Web deployment to the local IIS server is no longer supported. The Web Deployment build tool has been removed from your project settings.">
+</Event><Event ErrorLevel="1" Project="testMyGL" Source="testMyGL\testMyGL.vcproj" Description="Attribute 'Detect64BitPortabilityProblems' of 'VCCLCompilerTool' is not supported in this version and has been removed during conversion.">
+</Event><Event ErrorLevel="0" Project="testMyGL" Source="testMyGL\testMyGL.vcproj" Description="Done converting to new project file 'C:\Users\kim\Documents\PA5_6\testMyGL\testMyGL.vcxproj'.">
+</Event><Event ErrorLevel="3" Project="testMyGL" Source="testMyGL\testMyGL.vcproj" Description="Converted">
+</Event><Event ErrorLevel="0" Project="" Source="testMyGL.sln" Description="솔루션을 변환했습니다.">
+</Event><Event ErrorLevel="3" Project="" Source="testMyGL.sln" Description="Converted">
+</Event></UpgradeLog>
