@@ -1,0 +1,13 @@
+<expressions>
+
+  <expression name="smile" filename = "express1.png">
+    <width> 33.5 </width>
+    <height> 36.016 </height>
+  </expression>
+
+  <expression name="sad" filename = "express2.png">
+    <width> 33.5 </width>
+    <height> 36.016 </height>
+  </expression>
+
+</expressions>

@@ -1,0 +1,13 @@
+<characters>
+
+  <character name="choco" filename = "choco.png">
+    <width>50</width>
+    <height>41.122</height>
+  </character>
+
+  <character name="bean" filename = "bean.png">
+    <width>50</width>
+    <height>45.244</height>
+  </character>
+
+</characters>

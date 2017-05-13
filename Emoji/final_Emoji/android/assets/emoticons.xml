@@ -1,0 +1,37 @@
+<emoticons>
+
+  <emoticon name="choco" filename = "choco-body.png">
+    <width> 35.774 </width>
+    <height> 30.437 </height>
+    <lLegPivotPosX> 5.142 </lLegPivotPosX>
+    <lLegPivotPosY> 14.884 </lLegPivotPosY>
+    <rLegPivotPosX> -6.409 </rLegPivotPosX>
+    <rLegPivotPosY> 14.683 </rLegPivotPosY>
+    <lArmPivotPosX> 16.193 </lArmPivotPosX>
+    <lArmPivotPosY> -1.506 </lArmPivotPosY>
+    <rArmPivotPosX> -15.389 </rArmPivotPosX>
+    <rArmPivotPosY> -2.393 </rArmPivotPosY>
+    <bodyPivotPosX> 0 </bodyPivotPosX>
+    <bodyPivotPosY> 0 </bodyPivotPosY>
+    <facePivotPosX> 0 </facePivotPosX>
+    <facePivotPosY> 4.321 </facePivotPosY>
+  </emoticon>
+
+  <emoticon name="bean" filename = "bean-body.png">
+    <width> 35.153 </width>
+    <height> 34.691 </height>
+    <lLegPivotPosX> 0.831 </lLegPivotPosX>
+    <lLegPivotPosY> 14.219 </lLegPivotPosY>
+    <rLegPivotPosX> -11.113 </rLegPivotPosX>
+    <rLegPivotPosY> 17.346 </rLegPivotPosY>
+    <lArmPivotPosX> 13.456 </lArmPivotPosX>
+    <lArmPivotPosY> 3.311 </lArmPivotPosY>
+    <rArmPivotPosX> 0 </rArmPivotPosX>
+    <rArmPivotPosY> -5.195 </rArmPivotPosY>
+    <bodyPivotPosX> 0 </bodyPivotPosX>
+    <bodyPivotPosY> 0 </bodyPivotPosY>
+    <facePivotPosX> 8.443 </facePivotPosX>
+    <facePivotPosY> -3.632 </facePivotPosY>
+  </emoticon>
+
+</emoticons>
