@@ -1,0 +1,302 @@
+			+---------------------------+
+			|	  CS 330	    |
+			| PROJECT 4: FILE SYSTEMS   |
+			|	   DESIGN DOCUMENT  |
+			+---------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Hyeongjong Kim <fa6842@kaist.ac.kr>
+Juyeon Yoon <greenmon@kaist.ac.kr>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+Project 3 VM 위에서 구현했습니다.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+
+		     INDEXED AND EXTENSIBLE FILES
+		     ============================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct inode_disk 
+{
+  …
+
+  disk_sector_t direct_idx[9]; //direct block pointer index
+  disk_sector_t indirect_idx[4]; //indirect block pointer index
+  disk_sector_t double_indirect_idx; //double indirect block pointer index
+
+  …
+
+  uint32_t unused[110]; // not used
+
+  …
+}
+
+struct inode_data 
+{
+  off_t length;
+  unsigned magic;
+  disk_sector_t direct_idx[9];
+  disk_sector_t indirect_idx[4];
+  disk_sector_t double_indirect_idx;
+  bool is_dir;
+  disk_sector_t parent;
+}
+// inode_disk를 inode로 옮길 때 잠깐 거쳐가는 structure이다. unused를 포함하고 있지 않으므로, 메모리(kernel pool)를 낭비하지 않기 위한 목적으로 새로 구현하였다.
+
+struct indirect_block
+{
+  disk_sector_t entry[128];
+}
+// indirect와 double indirect block에 사용된다. 
+
+
+>> A2: What is the maximum size of a file supported by your inode
+>> structure?  Show your work.
+
+inode는 14 block 포인터중에 4개의 direct block과 9개의 indirect block, 그리고
+1개의 double block을 가지고 있다. block sector size는 512 bytes이고, 
+128개의 block pointer를 indirect와 double indirect가 가지고 있으므로,
+
+4*512 + 9*128*512 + 128*128*512 = 8980480 bytes = 8.56 MB이다. 
+
+---- SYNCHRONIZATION ----
+
+>> A3: Explain how your code avoids a race if two processes attempt to
+>> extend a file at the same time.
+
+file을 extend할 때, file의 inode에 접근하여야 한다. 하지만 inode_lock이 걸려있으므로
+file system 내부적으로 directory inode에 접근하는 시도를 one by one으로 만들 수 
+있다. 따라서 다른 process가 extend를 한 후에야 inode_lock이 release되고 
+그 다음 process가 inode_lock을 acquire하여 file extend를 할 것이다.  
+
+>> A4: Suppose processes A and B both have file F open, both
+>> positioned at end-of-file.  If A reads and B writes F at the same
+>> time, A may read all, part, or none of what B writes.  However, A
+>> may not read data other than what B writes, e.g. if B writes
+>> nonzero data, A is not allowed to see all zeros.  Explain how your
+>> code avoids this race.
+reading thread는 반드시 현재 파일의 length 이후는 읽을 수 없다. 그러므로 writing thread는 
+file grow를 할 때 extend된 부분에 먼저 데이터를 쓰고 난 다음에 length를 update해 주어야 한다.
+그러므로 reading thread는 비로소 B가 그 부분에 데이터를 완전히 쓰고 난 이후에 그 부분을 읽을 수 있게 된다.
+
+>> A5: Explain how your synchronization design provides "fairness".
+>> File access is "fair" if readers cannot indefinitely block writers
+>> or vice versa.  That is, many processes reading from a file cannot
+>> prevent forever another process from writing the file, and many
+>> processes writing to a file cannot prevent another process forever
+>> from reading the file.
+위의 구현에서는 semaphore나 lock을 사용하지 않기 때문에 reading thread가 writing thread를 블록하지 않고, writing이 한 sector를 grow하고 그 부분에 새로운 데이터를 쓰는 것이 완료되면 바로 reading thread가 preemption하여 데이터를 읽을 수 있다. 이러한 과정이 fair하게 일어나도록 하기 위해 file grow에서 file length를 늘려주는 것을 한 섹터 단위로 줄였다. 그러므로 이미 새로 쓰기가 완료된 섹터들에 대해서는 reading thread가 바로바로 read할 수 있게 된다.
+
+---- RATIONALE ----
+
+>> A6: Is your inode structure a multilevel index?  If so, why did you
+>> choose this particular combination of direct, indirect, and doubly
+>> indirect blocks?  If not, why did you choose an alternative inode
+>> structure, and what advantages and disadvantages does your
+>> structure have, compared to a multilevel index?
+
+index가 3 level을 가지도록 구현하였다. 8mb file을 지원할 수 있기 위해 double indirect
+block을 사용해야 했다. 하지만 double indirect block만으로 index를 구성하기엔 
+double indirect가 4 disk read가 필요하므로 direct와 single indirect block도
+섞어 쓰는 것으로 정하였다. 이 방법을 사용하면 external fragmentation을 피할 수 있다. 
+
+			    SUBDIRECTORIES
+			    ==============
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct inode_disk 
+{
+  …
+  bool is_dir;
+  disk_sector_t parent;
+  …
+}; 
+directory를 파일처럼 취급하기 때문에 각각의 directory는 inode를 갖는다.
+따라서 is_dir을 통해 inode가 file인지 directory인지 구분한다.
+relative path를 구현하기 위해 각각의 directory는 parent directory를 
+알아야 한다. 따라서 parent directory의 disk_sector를 parent에 저장한다.
+
+struct thread 
+{
+  …
+  struct dir *current_dir;
+  …
+
+}
+
+현재 process가 어떤 directory에 있는지 알아야 하므로 thread에 
+current_dir을 추가하였다. 
+
+---- ALGORITHMS ----
+
+>> B2: Describe your code for traversing a user-specified path.  How
+>> do traversals of absolute and relative paths differ?
+
+named을 받으면 일단 그 name이 root를 열어야 하는지 아니면 thread에 저장된 
+current directory를 열어야 하는지 정한다. strtok_r을 이용해 name을
+‘/’으로 나누고 그 name의 directory의 갯수를 구한 후 count에 저장한다. 그리고 다시 name을
+ strtok_r을 이용해 ’/‘로 나누고 strtok_r을 이용해 구한 token에 저장된 directory의 name을 
+앞서 연 directory와 dir_lookup을 이용해 그 directory의 inode를 찾는다. 
+그리고 이전 directory는 닫고 방금 찾은 directory의 inode를 이용해 새 directory를 연다.
+그리고 방금 구한 count를 이용해 마지막 token일 때는 directory이거나 filename일 수 있으므로,
+일단은 마지막 token을 다른 곳에 저장하고 strtok_r의 for loop을 끝낸다. 
+그 후 전에 저장한 token을 이용해 dir_lookup을 하고 이전 directory는 닫는다. 
+그리고 dir_lookup을 이용해 찾은 inode의 data에 접근해 directory인지 file인지 알아낸다. 
+file이면 file에 대한 syscall을 수행하고 directory이면 directory에 대한 syscall을 
+수행하면 된다. 
+
+위의 경우가 absolute path의 경우이지만 relative의 path의 경우도 크게 다르지 않다. 
+일단 relative path를 구현하기 위해 inode_disk에 parent를 만들고 여기에 parent
+directory를 저장해 놓는다. relative일 경우 위에서 strtok_r 중 dir_lookup을 하면
+.이나 ..을 못 찾을 것이므로 inode는 null일 것이다. 이 때 token이 .이면 현재 directory의
+inode에 있는 sector를 이용해 inode_open을 하여 inode를 구하고 ..일 경우 현재
+directory의 inode의 data에 있는 parent를 이용해 inode_open을 하여 
+inode를 구한다. 
+
+---- SYNCHRONIZATION ----
+
+>> B4: How do you prevent races on directory entries?  For example,
+>> only one of two simultaneous attempts to remove a single file
+>> should succeed, as should only one of two simultaneous attempts to
+>> create a file with the same name, and so on.
+
+directory는 file과 비슷한 취급을 한다. 따라서 directory 내의 directory나 file을 
+지우기 위해선 directory의 inode에 접근하여야 한다. 하지만 inode마다 하나씩 할당된 lock을 통해 
+file system 내부적으로 directory inode에 접근하는 시도를 one by one으로 만들 수 
+있다. 우리 구현에서는 최대한 concurrency를 높이기 위해 매번 lock을 사용하지는 않았고(file growth에만 사용) create나 remove를 수행하기 이전에 이미 같은 이름이 존재하는지와 removed flag가 바뀌었는지를 먼저 검사하여
+중복되지 않도록 분기점을 나누어 주었다.
+
+>> B5: Does your implementation allow a directory to be removed if it
+>> is open by a process or if it is in use as a process's current
+>> working directory?  If so, what happens to that process's future
+>> file system operations?  If not, how do you prevent it?
+
+지울 수 있게 만든다. file과 마찬가지로 directory의 inode->removed를 true로 바꾸고
+나중에 마지막으로 directory가 닫히면 그 때 inode를 지우게 된다. 
+
+---- RATIONALE ----
+
+>> B6: Explain why you chose to represent the current directory of a
+>> process the way you did.
+
+각각의 thread마다 current_dir을 추가하여 여기에 current directory를 넣엇다.
+directory.c에 있는 함수를 사용하여 directory를 open하고 close하는 것이 쉬울 
+것 같았고, 또한 시스템 콜에서 상대 경로 파일을 lookup  할 때, reopen을 통해 
+current directory를 쉽게 다시 불러올 수 있었다. 
+
+
+			     BUFFER CACHE
+			     ============
+
+---- DATA STRUCTURES ----
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct cache_entry
+{
+    struct hash_elem elem;
+    disk_sector_t sector_no;
+    bool used;
+    bool dirty;
+    void *data; //DISK_SECTOR_SIZE
+};
+
+struct hash buffer_cache;
+struct lock cache_lock;
+
+메모리에 자주 접근되는 디스크 sector를 임시적으로 저장하기 위해 cache_entry 구조체를 추가하였다.
+60개의 엔트리로 제한되는 해쉬 테이블로 구성되었으며, 이 해쉬 테이블에 접근하기 위해서는
+cache_lock을 획득해야 하도록 만들었다. 캐시를 사용하면 delete에 의해 iterator가 비활성화되는 문제가 있지만,
+캐시로부터 index를 찾는 과정이 빠르게 이루어질 필요가 있다고 생각하여 탐색 속도가 빠른 데이터 스트럭쳐인 해시테이블을 사용하기로 한 것이다.
+
+---- ALGORITHMS ----
+
+>> C2: Describe how your cache replacement algorithm chooses a cache
+>> block to evict.
+캐시 엔트리가 꽉 찼을 때 (cache_insert()에서) eviction이 일어난다. 우리는 clock algorithm을 해쉬 테이블에
+적용시켜서 생각했다. hash iterator을 해쉬의 처음부터 이동시키면서 used bit가 0인 것을 찾아 evict하고 1인 것은 0으로 값을 내려주었다. 만약 dirty bit가 true라면 캐시에 있는 내용과 디스크에 있는 내용이 같지 않을 것이므로 disk_write를 통해 디스크의 내용을 업데이트해준다. 그 자리에 새롭게 현재 접근한 디스크 섹터의 내용이 cache entry로 들어가게 된다.
+
+>> C3: Describe your implementation of write-behind.
+cache에 write한 것은 위에서 언급했듯이 cache_evict()에서 비로소 dirty bit를 확인하여 디스크에 업데이트해준다.
+그러나 이것만으로는 sudden power off와 같이 갑자기 시스템이 종료되어 cache entry가 정상적으로 destroy되지 않는 경우를 처리해 줄 수 없다. 이 경우 캐시에 입력한 정보가 모두 소실되기 때문이다. 그러므로 write_back_thread를 새롭게 thread_create() 을 통해 spawn한 후 timer_sleep을 통해 5번의 TIMER FREQ마다 모든 캐시의 내용을 디스크에 업데이트 해주도록 만들었다.
+
+>> C4: Describe your implementation of read-ahead.
+read를 할 때 연속된 다음 섹터도 디스크에서 함께 읽어와서 캐시 엔트리에 넣는데, 이때에도 병렬적으로 수행되어야 성능 향상의 의미가 있으므로 thread_create()로 read_ahead_thread를 spawn하고(인자로 다음 섹터의 값을 보내 준다) 현재 읽어오는 섹터의 바로 다음 섹터를 읽어 캐시에 저장하도록 한다. 그러나 이것은 continuous allocation을 사용했을 때에만 의미가 있고, 현재 indexed allocation을 사용할 때에는 파일에 연속적으로 접근한다 해도 섹터를 연속적으로 접근한다는 보장이 없기 때문에 성능 향상을 기대할 수 없다. 또한 read_ahead_thread까지 활성화시키면 여러 개의 쓰레드가 경쟁적으로 디스크에 접근하면서 락 관련 문제가 광범위하게 발생하여 디버깅이 어려웠다. 그러므로 우리는 indexed allocation을 구현하면서 read_ahead_thread는 비활성화하기로 결국 결정하였다. 그러나 다큐먼트에 나온 대로의 implementation은 여전히 cache.c에 존재한다.
+
+---- SYNCHRONIZATION ----
+
+>> C5: When one process is actively reading or writing data in a
+>> buffer cache block, how are other processes prevented from evicting
+>> that block?
+cache_lock을 사용하기 때문에 한 번의 하나의 쓰레드만 캐시 엔트리에 접근할 수 있고, 
+그러므로 사용하고 있는 cache entry를 evict하는 일은 벌어지지 않는다. 해시 테이블을 사용했기 때문에
+하나의 insert는 모든 해시 테이블의 iterator 정보를 reset하므로 이렇게 큰 범위에서 cache_lock을 걸어줄 수밖에 없었다.
+
+>> C6: During the eviction of a block from the cache, how are other
+>> processes prevented from attempting to access the block?
+위와 같은 방법으로 cache_lock을 통해 이러한 race condition이 해소된다.
+
+---- RATIONALE ----
+
+>> C7: Describe a file workload likely to benefit from buffer caching,
+>> and workloads likely to benefit from read-ahead and write-behind.
+buffer cache를 통해 같은 데이터를 (여러 쓰레드가 병렬적으로 또는 한 쓰레드가 sequential하게)
+여러 번 읽고 쓸 때 그때마다 디스크에 access할 필요 없이 바로 메모리에 접근하여 데이터를 읽어올 수 있으므로
+cache hit 하는 경우에 대해서는 훨씬 빠른 성능 향상을 기대할 수 있다.
+read-ahead에 의해서는 파일을 연속적으로 읽는 경우가 많으므로 multi-thread로 다음에 읽을 데이터를 병렬적으로 함께 읽는다면 실제 멀티코어 환경에 대해(현재의 시스템 환경으로 구성된 핀토스는 해당되지 않을 것이다) 최대 두배의 성능 향상을 이끌어낼 수 있을 것이다.
+또한 write-behind policy를 적용하였기 때문에 방금 write한 데이터를 바로 read하는 경우에 대해서 디스크 접근 없이 계속적으로 메모리만 읽으면 되므로 훨씬 향상된 성능을 보일 것이다.
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+처음 캐시를 구현하는 것은 VM 프로젝트와 비슷하여 수월했지만 Allocation 방식을 바꾸는 것에서 multi-level에 대한 
+인덱스 계산을 정확하게 수행하는 것이 매우 헷갈렸습니다. 또한 file grow를 구현할 때에 synchronization에서 length를 나중에 바꾸어야 한다는 사실이 다큐먼트에 명확하게 제시되어 있지 않아 나중에 syn-rw를 디버깅할 때
+많은 시간과 어려움을 겪기도 했습니다. 아무리 디버깅 능력을 기를 수 있다고 해도 너무 많은 시간 낭비를 막기 위해
+file growth에서 reading thread와 writing thread의 우선순위에 대해 좀더 명확하게 제시해 줬으면 더 좋았겠다고 생각했습니다.
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+파일 시스템의 allocation이 수업 시간에는 추상적으로 생각되었는데 확실히 직접 구현해 보니 그 과정이 좀더
+실감나기는 했습니다.
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+위에 언급했던 것과 같이 synchronization 문제.. 프로젝트 설명할 때 다큐먼트를 자세히 읽으라고만 하고
+어떤 부분을 중점적으로 볼 것인지는 전혀 언급해주지 않으셔서 너무 힘들었습니다.
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students in future quarters?
+
+>> Any other comments?

@@ -1,0 +1,347 @@
+			+---------------------------+
+			|	      CS 330	    |
+			| PROJECT 3: VIRTUAL MEMORY |
+			|	   DESIGN DOCUMENT  |
+			+---------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+
+Hyeongjong Kim <fa6842@kaist.ac.kr>
+Juyeon Yoon <greenmon@kaist.ac.kr>
+
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+토큰 1개 사용하겠습니다!
+
+			PAGE TABLE MANAGEMENT
+			=====================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+1. frame table 스트럭쳐
+
+struct frame
+{
+    struct list_elem elem;
+    void *addr; //physical memory address
+    uint32_t *pte;
+    void *upage; //Installed page's User virtual address
+    struct thread *owner;
+    bool pin;
+
+};
+
+struct list frame_table;
+
+User pool에서 프레임을 할당하는 경우, 이 프레임들을 따로 list로 선언된 frame table에 저장하여 관리합니다.
+프레임 테이블은 글로벌하게 하나만 존재합니다.
+리스트의 원소들은 physical address와 이 주소가 저장된 페이지 테이블 엔트리의 주소, install된 user virtual address와 
+이 프레임을 소유한 쓰레드의 포인터를 포함합니다. 추가적으로, 이 프레임을 사용하고 있는 도중에 evict가 일어나지 않도록 pin이라는 
+boolean member를 사용하였습니다.
+
+
+2. supplemental page table
+
+enum page_location
+{
+    FRAME,
+    SWAP,
+    FILE,
+    ZERO,
+	MMAP
+};
+
+struct page
+{
+    struct hash_elem elem;
+    struct frame *fr;
+    void *uaddr; //hash key
+    enum page_location location;
+    struct file *file;
+    bool writable;
+    bool is_code_seg;
+    int32_t ofs;
+    int page_read_bytes;
+	size_t swap_index;
+};
+
+실제로 피지컬 메모리에 올라가 있는 프레임 뿐만 아니라, Lazy Loading으로 인해 Swap disk, 혹은 file에 있는 페이지들에 대해서도
+supplemental page table에 저장하여 관리하였습니다. 주어진 user virtual address로 supplemental page table을 lookup할 필요가 있기 때문에,
+빠른 검색에 용이한 데이터 스트럭쳐인 hash table을 택했습니다.
+페이지 테이블의 각 원소를 struct page로 선언된 구조체로 구현하였고, 여기에는 hash key로 사용되는 user virtual address 뿐만 아니라 프레임에 있을 경우 매핑된 프레임 정보 구조체의 주소,
+페이지가 들어있는 위치를 enumerator로 저장해 주었습니다. 파일에서 나중에 읽어와야 하는 경우에 대비하여 파일의 주소와 읽어야 할 길이, 오프셋 등도 추가적으로 저장하였고, 스왑에서 읽어와야 할 경우를 대비하여
+스왑 인덱스도 구조체에 포함합니다.
+
+supplemental page table은 원래 있던 pagedir처럼 쓰레드마다 하나씩 소유하며, 쓰레드가 종료할 때 이 데이터 스트럭쳐 또한 사라집니다.
+
+
+---- ALGORITHMS ----
+
+>> A2: In a few paragraphs, describe your code for locating the frame,
+>> if any, that contains the data of a given page.
+
+프레임의 할당은 지정된 페이지에 종속적인 것이 아니라, 물리 메모리의 빈 공간을 찾아 사용 가능한 프레임을 ‘할당받고’, 
+이후에 지정된 페이지의 user address를 쓰레드마다 하나씩 가지고 있는 페이지 디렉토리/페이지 테이블에 install하는 과정으로
+이루어집니다. 우리 코드에서 frame_alloc() 함수로 구현된 프레임 할당 함수는 pintos에 구현되어 있는 palloc_get_page(PAL_USER)를 wrap 하는 구조로, 
+빈 프레임에 대한 physical address와 프레임에 대한 추가적인 정보를 포함하는 스트럭쳐를 반환하는 형태입니다. (추가적으로 프레임이 가득찬 경우에도 eviction policy에 의해
+다른 프레임을 물리 메모리에서 free하고 그 자리에 프레임을 다시 할당하는 기능 또한 포함합니다)
+이후, 유저가 request한 user virtual address에 대해 install_page() 함수를 통해, 실제로 page directory에 두 주소의 매핑을 저장하게 되고 그것을 통해 각 프로세스는
+user address를 통해 지정된 프레임에 접근할 수 있습니다.
+물리 메모리의 user pool에 더이상 공간이 없어 이 프레임이 evict 되는 경우에는, 저장된 데이터가 페이지 단위로 그대로 swap disk에 쓰여지고, 반대로 이 프레임에 install되었던
+user address에 대한 request가 다시 발생한 경우 page_fault 핸들러에서 다시 swap disk의 데이터가 새롭게 allocate 받은 프레임에 쓰여지게 됩니다.
+즉 user address는 그대로이지만 매핑되어 있는 kernel virtual address는 swapping에 의해 바뀔 수 있는 것입니다.
+
+
+>> A3: How does your code coordinate accessed and dirty bits between
+>> kernel and user virtual addresses that alias a single frame, or
+>> alternatively how do you avoid the issue?
+같은 프레임을 공유하고 있음에도 불구하고 kernel virtual address와 user virtual address에 해당하는 페이지 엔트리에 접근 히스토리가 따로 저장되는 문제가 발생하게 됩니다.
+이것을 피하기 위해 우리는 user virtual address가 지정되어 있는 경우에는 항상 user virtual address를 사용하여 프레임에 접근하도록 하였습니다. 그러므로 dirty bit와 accessed bit은
+항상 user virtual address에 해당하는 page table entry에서 update 됩니다.
+
+---- SYNCHRONIZATION ----
+
+>> A4: When two user processes both need a new frame at the same time,
+>> how are races avoided?
+frame_alloc() 함수에 frame_lock을 걸어 놓았기 때문에, 한번에 하나의 프로세스만 frame을 allocate 받을 수 있습니다. 그러므로 race 문제가 발생하지 않습니다.
+
+
+---- RATIONALE ----
+
+>> A5: Why did you choose the data structure(s) that you did for
+>> representing virtual-to-physical mappings?
+
+1. 프레임 테이블 : list - evict할 프레임을 고르는 과정에서 중간에 있는 frame을 remove하고 리스트를 선형적으로 탐색하는 과정이 직관적이고 가장 효율적이라 판단되어 선택하였다.
+2. 보조 페이지 테이블 : hash - 앞에서 언급했다시피 user virtual address를 사용하여 struct page를 탐색하는 과정이 빈번하게 일어나기 때문에 address를 hash key로 사용하여 탐색을 효율적으로 수행하는 해시 테이블을 사용하였다.
+3. 스왑 테이블 : bitmap - 스왑 테이블을 관리하기 위해서는 단순히 사용 중인지 아닌지만을 판단하기만 하면 되므로 bitmap을 사용하는 것이 최대한 시간과 공간복잡도를 줄일 수 있는 방법이었다.
+
+		       PAGING TO AND FROM DISK
+		       =======================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct disk *swap_disk;
+struct bitmap *swap_table;
+
+스왑 테이블의 사용 여부를 알 수 있는 스왑 테이블을 0과 1로 표현되는 bitmap 데이터 스트럭쳐를 이용하여 구현했습니다.
+모든 스왑 연산이 하나의 페이지 단위로 일어나기 때문에, 비트맵의 한 비트는 페이지 하나를 의미합니다.
+비트맵의 처음부터 free인 부분이 있는지를 scan하여, 그 부분에 evict할 데이터를 write합니다. (swap_out)
+또는 supplemental page에 저장되어 있는 swap index를 이용하여, 그 인덱스에 해당하는 데이터를 다시
+allocate된 프레임에 씁니다. (swap_in)
+
+---- ALGORITHMS ----
+
+>> B2: When a frame is required but none is free, some frame must be
+>> evicted.  Describe your code for choosing a frame to evict.
+저희는 eviction할 프레임을 정하는 과정에서 필요한 instruction의 수를 최소화하기 위해,
+accessed bit 만을 이용하여 second-chance algorithm으로 frame을 선택하도록 하였습니다.
+먼저 리스트의 처음 부분에서 시작하여, pin이 false인 프레임들에 대해, accessed bit이 0인 것을 고릅니다. 1인 것들은 모두 0으로 만듭니다.
+리스트의 끝에 도달했을 때 accessed bit이 0인 것이 없으면 다시 처음으로 돌아가고, 이때 첫 번째 프레임이(pin이 false인 것들 중) evict의 대상이 됩니다.
+물론 dirty bit까지 사용하여 read-only page는 evict하지 않도록 할 수도 있지만,
+eviction이 많이 일어나는 경우에 eviction할 프레임을 고르는 탐색 과정을 최대한 단순화하는 것이, 적어도 테스트 케이스에 한해서는 성능 향상에
+더 도움이 되는 것으로 판단하였습니다.
+
+>> B3: When a process P obtains a frame that was previously used by a
+>> process Q, how do you adjust the page table (and any other data
+>> structures) to reflect the frame Q no longer has?
+먼저 Q가 가지고 있는 frame structure는 free하고, pagedir.c에 미리 구현되어 있는 pagedir_clear_page() 함수를 사용하여, 
+프로세스 Q의 이 페이지에 대한 user address mapping을  더 이상 유효하지 않게 만들었습니다. 또한 이 프레임에 저장되어 있던 데이터는
+스왑 디스크로 옮기고, supplemental page에 저장된 location을 SWAP으로 바꿔줍니다. 그러므로 Q가 이 프레임에 접근하려고 시도하면
+이미 페이지 디렉토리에서 제거된 상태이기 때문에 page fault에 진입하게 되고, location이 SWAP으로 지정되어 있기 때문에 새롭게 frame을
+할당받아 거기에 SWAP disk에 저장된 데이터를 다시 옮겨올 것입니다.
+
+>> B4: Explain your heuristic for deciding whether a page fault for an
+>> invalid virtual address should cause the stack to be extended into
+>> the page that faulted.
+
+페이지 폴트가 일어났을 때 interrupt frame을 통해 esp를 알 수 있습니다. 이 값과 fault가 난 address를 비교하여,
+먼저 esp - 32 보다 fault address가 크거나 같으면 그것이 stack access라고 추정할 수 있습니다. (PUSHA 연산이 최대 32바이트만큼이므로)
+그러나 stack grow가 data segment를 넘어서면 overlap되는 문제가 발생하므로, 스택의 절대적인 크기를 262144로 제한하여 이보다 큰 스택 그로우 요청에 대해서는
+프로세스가 비정상 종료 (exit(-1))하도록 만들었습니다.
+
+---- SYNCHRONIZATION ----
+
+>> B5: Explain the basics of your VM synchronization design.  In
+>> particular, explain how it prevents deadlock.  (Refer to the
+>> textbook for an explanation of the necessary conditions for
+>> deadlock.)
+크게 세 개의 락을 사용하였는데, 파일 시스템에 접근하기 위한 filesys_lock과 frame에 접근하기 위한 frame_table_lock을 사용하였다.
+데드락이 발생하는 4가지 필요조건(Mutual Exclusion, No preemption, Hold and wait, Circular Wait) 에서
+Synchronization을 위해 lock structure을 사용하였으므로 Mutual Exclusion과 No preemption은 피할 수 없다.
+그러나 하나의 락이 acquire 되면 그것이 release 되기 전까지는 다른 lock을 사용하지 않으면
+hold and wait 조건을 피해갈 수 있다. 
+
+>> B6: A page fault in process P can cause another process Q's frame
+>> to be evicted.  How do you ensure that Q cannot access or modify
+>> the page during the eviction process?  How do you avoid a race
+>> between P evicting Q's frame and Q faulting the page back in?
+
+frame_evict() 함수에서 eviction할 대상을 고를 때 pin이 true인 프레임은 고려하지 않는다.
+그러므로 Q가 접근하거나 수정하는 프레임에 대해서는 eviction 자체가 발생하지 않을 것이므로 race condition을 
+prevent할 수 있다. 또한 eviction을 수행할 프레임을 고르는 즉시 이 프레임의 pin value를 true로 set 하므로
+다른 프로세스가 이 프레임을 이중으로 evict하지 못하도록 막는다. P가 Q의 프레임을 evict하고 free하기 이전에 pagedir_clear_page() 함수를 통해
+page directory의 매핑 자체를 지워버린다. 그러므로 eviction을 수행하는 도중에 Q가 이 프레임에 접근하려 한다면
+page fault가 일어나 새로운 프레임을 할당받을 것이다. pagedir_clear_page()를 한 후에 바로
+SWAP에 원래 있던 데이터를 옮기고 supplemental page에서 page의 location을 swap으로 옮기는데, 만약 이 과정에서
+page_fault가 발생한다면 데이터가 swap에 옮겨지기 전일 수 있으므로 race condition이 발생할 수도 있다.
+그러나 발생한 페이지 폴트 또한 스왑에서 데이터를 읽어오기 위해 swap_lock을 사용할 것이다. 그러므로 eviction에 의한 swap_out이 완전히 끝난 후 페이지 폴트에 의한 swap_in이 수행되므로
+문제가 되지 않는다. 또한 그 이전에 frame_table_lock도 사용하기 때문에 이 frame_alloc() 함수가 끝나기 전에는 새롭게 발생한 페이지 폴트에서
+frame_alloc()에 아예 진입하지도 못한다. 따라서 race condition이 생기지 않는다고 보장할 수 있다.
+
+>> B7: Suppose a page fault in process P causes a page to be read from
+>> the file system or swap.  How do you ensure that a second process Q
+>> cannot interfere by e.g. attempting to evict the frame while it is
+>> still being read in?
+파일 시스템을 사용하는 도중에 페이지 폴트가 일어나면 안된다. 즉 eviction도 일어나지 않아야 한다.
+그러므로 파일 시스템을 사용하는 도중에는 그 안에 넘겨주는 프레임들의 pin을 모두 true로 set 해서
+evict가 아예 되지 못하도록 만들었다. syscall.c에서 read, write 등의 시스템 콜을 할 때 유저가 넘겨준 버퍼와 포인터들에 대해 이것을 사용하는 동안 ptr_pin 또는 frame_pin(buffer, size)를 구현하여
+버퍼를 포함하는 페이지에 매핑된 프레임의 pin 값을 모두 true로 만들어 주었다. 그러므로 이 프레임을 사용할 때에는
+evict되지 않도록 막아 주었다.
+
+>> B8: Explain how you handle access to paged-out pages that occur
+>> during system calls.  Do you use page faults to bring in pages (as
+>> in user programs), or do you have a mechanism for "locking" frames
+>> into physical memory, or do you use some other design?  How do you
+>> gracefully handle attempted accesses to invalid virtual addresses?
+Project 2를 구현할 때, 시스템 콜에 들어가기 이전에 유저가 넘겨준 포인터를 먼저 검사하는 형태로 구현하였다.
+이를 확장하여, 만약 유저가 넘겨준 포인터가 paged-out이라면 이때 바로 frame에 install하여 시스템 콜로 넘겨주도록 하였다.
+파일 시스템을 사용하는 도중에 다시 paged-out되어 page fault가 나면 안되기 때문에 이 경우에는 pin을 이용하여
+프레임을 ‘고정’시켰다.
+
+---- RATIONALE ----
+
+>> B9: A single lock for the whole VM system would make
+>> synchronization easy, but limit parallelism.  On the other hand,
+>> using many locks complicates synchronization and raises the
+>> possibility for deadlock but allows for high parallelism.  Explain
+>> where your design falls along this continuum and why you chose to
+>> design it this way.
+
+synchronization problem을 고려하기 위해 페이지 폴트를 한번에 하나만 실행되게 하는 안을 고려하기도 했지만,
+그렇게 하면 핀토스의 multi-thread 구조가 거의 쓸모없게 된다. 그러므로 global하게 share 되는 data structure
+(physical memory frame, frame table, swap table, file system)에 접근할 때마다 따로따로 lock을 걸어서
+동기화 문제를 해결하였고, 데드락의 가능성은 circular wait이 일어나지 않도록 주의를 기울임으로써 해결하였다.
+
+
+
+			 MEMORY MAPPED FILES
+			 ===================
+
+---- DATA STRUCTURES ----
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+1. mapid와 map list
+
+thread.h
+
+struct thread {
+
+    int mapid;
+    struct list mmap_list;
+	
+}
+
+mapid는 유니크한 mapping id를 allocate하기 위해 필요합니다. 그 프로세스가 가지고 있는 최대의 mapid를 저장해놓고 map될 때마다 mapid를 1씩 높히고 그 값을 allocate해줍니다. mmap_list는 각각의 process마다 가지고 있는 memory mapped file들을 관리하기 위해 thread의 mmap_list에 mmap_elem을 저장합니다.
+
+2. mmap과 munmap
+
+syscall.h
+
+int mmap (int fd, void *addr)
+
+file descriptor와 user address를 받아 file reopen을 하여 file의 length만큼 page를 만듭니다. 만들어진 page를 supplement page table에 넣어줍니다. (lazy loading을 구현해야 하므로 file을 physical에 mapping하는 것은 page fault에서 합니다.) 그리고 나서 만들어진 mmap을 관리해야 하므로 current thread의 mmap_list에 mmap_elem을 만들어 넣어줍니다. 그리고 current thread에서 allocate해준 mapid를 반환합니다. 
+
+void munmap(int mapid);
+
+mapid를 받아 그 mapid를 이용해 current thread의 mmap_list에서 그 mapid의 mmap_elem을 가져옵니다. mmap_elem에서 file이 어느 주소에서부터 mapping되는지, 그리고 file을 mapping하기 위해 얼마나 많은 page를 썼는지 알아내어 그 주소부터 page 갯수만큼 munmap을 진행합니다. pagedir와 user address를 이용하여 그 주소의 dirty bit을 알아내고 dirty bit이 true이면 그  페이지의 내용이 수정되었다는 뜻이므로 그 페이지의 내용을 file에 다씨 써주고 allocate된 페이지와 프레임을 지워줍니다. pagedir에서 그 user address도 지우고 file을 close하고 mmap_elem도 free해줍니다. 
+
+3. mmap_elem
+
+struct mmap_elem {
+    void* addr;
+    int pg_count;
+    int mapid;
+    struct list_elem elem;
+}
+
+현재 thread의 mmap_list에 들어갈 mmap_elem이다. list에 넣기 위한 list_elem, 그리고 mmap의 start adds, thread로부터 받은 mapid, map하는데 사용하였던 page의 수를 저장하기 위한 pg_count가 들어가 있다. munmap을 할 때 addr부터 얼마나 많은 페이지를 지워야 하는지 알기 위해 필요하다.
+
+
+---- ALGORITHMS ----
+
+>> C2: Describe how memory mapped files integrate into your virtual
+>> memory subsystem.  Explain how the page fault and eviction
+>> processes differ between swap pages and other pages.
+
+page fault가 일어나면 memory mapped file은 file에 있는 것과 비슷하게 frame을 allocate하고 physical memory에 mapping 됩니다. 하지만 location은 frame이 아니라 mmap으로 지정해줍니다. 그 이유는 frame으로 똑같이 location으로 해주면 나중에 eviction을 할 경우 mmap과 frame을 구별할 수 없기 때문입니다. 다시 더 자세히 설명하면 mmap의 경우 eviction을 할 때 file에 다시 쓰여지고, frame의 경우 swap-out을 통해 disk에 쓰여지기 때문에 둘을 구별할 필요가 있기 때문입니다. 또한 file긔 경우 frame에 올려진 file과 그렇지 않은 file을 FILE과 FRAME으로 location을 달리 해줬는데 memory mapped file은 그럴 필요가 없습니다. 그 이유는 memory mapped file의 경우 eviction이 되면 file에 다시 쓰여지지 disk에 swap out되지 않기 때문입니다. 따라서 memory mapped file의 page가 page fault가 일어나면 file에서 가져오기만 하면 되기 때문입니다. 물론 이렇게 하기 위해선 file system과 eviction의 synchronization이 잘 되있어야 한다고 생각합니다. 
+
+>> C3: Explain how you determine whether a new file mapping overlaps
+>> any existing segment.
+
+syscall의 mmap에서 start address부터 차근차근 PGSIZE만큼 page를 allocate하는데 allocate하기 전에 그 페이지가 supplement page table에 있는지 먼저 확인합니다. 이미 supplement page table에 있다면 그 page는 이미 존재하는 segment이므로 이 때 까지 allocate한 페이지들을 supplement page table에서 지우고 page struct를 free해줍니다. 
+
+---- RATIONALE ----
+
+>> C4: Mappings created with "mmap" have similar semantics to those of
+>> data demand-paged from executables, except that "mmap" mappings are
+>> written back to their original files, not to swap.  This implies
+>> that much of their implementation can be shared.  Explain why your
+>> implementation either does or does not share much of the code for
+>> the two situations.
+
+일단 우리는 share하지 않는 쪽으로 implement했다. 일단 file과 mmap이 코드를 공유할 수 있는 건 page fault가 일어나서 physical memory에 file을 쓸 때, 그리고 eviction이 일어났을 때 정도이다. eviction이 일어났을 때는 mmap이면 file에 쓰게 하고 그렇지 않으면 disk에 쓰게해서 그 외의 eviction 과정은 share하도록 만들었지만 page fault 후 physical memory에 file을 쓸 때는 code를 duplicate하고 location 지정해 두는 부분만 다르게 설정했다. 지금 생각해보니 file을 physical memory에 쓰는 함수를 따로 만들고 location만 따로 설정하도록 하여 code duplication을 줄이는게 나았다고 생각된다. 
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+3-1 때 lazy loading까지 구현해버려서 매우 HELLLLL이었습니다… ㅠ 덕분에 3-2는 조금 편하게 한거 같은데… 3-2에서 뭘 할지 몰라서 lazy loading까지 당연히 구현하는 거라 생각했어요. 흠,,, 3-1과 3-2의 implement 사항을 공지하고 3-1을 소개해주셨으면 좋겠어요!
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+page-pararrel 테스트에서 synchronization이 매우 매우 매우 중요하다는 것을 배웠습니다. 그리고 page-merge-stack 테스트를 통해 구조를 짤 때 어떤 함수를 쓸지, 이 함수를 쓸 때 overhead가 있다면 이걸 쓰지 않고 할 수 있는 방법이 있는지, 불필요한 걸 검사하지 않는지 등 최대한 고려해야 performance가 올라간다는 것을 배웠습니다. 
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+없습니다. 
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+없습니다. 
+
+>> Any other comments?
+없습니다. 

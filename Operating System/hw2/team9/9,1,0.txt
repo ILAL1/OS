@@ -1,0 +1,288 @@
+			+---------------------------+
+			|	    CS 330	      |
+			| PROJECT 2: USER PROGRAMS   |
+			| 	DESIGN DOCUMENT      |
+			+---------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Hyeongjong Kim <fa6842@kaist.ac.kr>
+Juyeon Yoon <greenmon@kaist.ac.kr>
+
+---- PRELIMINARIES ----
+
+
+We referred to the lecture notes and pintos document to implement structures and methods for this project.
+
+We got a help to get concept of virtual memory addressing from our assigned TA, Seungcheol Lee.
+
+
+			   ARGUMENT PASSING
+			   ================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+argument parsing을 위해 따로 정의한 구조체나 static variable은 존재하지 않지만, 동적으로 할당한  
+char** arg_addr;
+
+malloc으로 전체 argument의 갯수를 먼저 계산하여 각각의 string이 저장된 첫 주소를 저장할 수 있도록, 동적으로 주소 배열을 선언하여 사용하였습니다.
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe how you implemented argument parsing.  How do
+>> you arrange for the elements of argv[] to be in the right order?
+>> How do you avoid overflowing the stack page?
+
+argument parsing은 주로 load()의 helper function인 setup_stack 안에서 구현하였습니다.
+그러나 load()를 수행하기 시작할 때 argument의 첫 번째 인자만을 execute하는 program name으로 사용해야 하기 때문에 먼저 이 부분만 분리하여 인자로 전달해 주고, (strtok_r을 한 번만 call)
+복사본을 만들어서 이 문자열을 그대로 setup_stack의 인자로 전달하고, 반복문 안에서 파싱을 수행하였습니다.
+성공적으로 인스톨된 스택에 *esp를 이동시키면서 문자열을 copy하고, 각각의 argument가 시작되는 부분의 주소를 arg_addr 배열을 동적으로 할당하여 저장해 주었습니다. 그러기 위해 먼저 calc_argc로 인자의 갯수를 계산한 다음 문자열의 parsing을 수행한 것입니다.
+이후 성능적인 이유로 4의 배수에 해당하는 메모리 주소에서 시작해야 하므로 *esp를 4로 나눈 나머지만큼 더 이동하여 word align을 맞추어 주고, 
+각 문자열이 시작하는 스택 메모리의 주소를 stack에 right to left order로 push해 줍니다. 스택에 저장하는 스트링은 left to right order이므로 저장할 때와는 반대의 순서로 인덱스를 설정하여 스택에 값을 할당해 주었습니다.
+
+바이트 순서가 문제가 될 수 있다고 생각했지만(pintos는 little endian으로 보임) 실제로 값을 할당해 줄 때에는 메모리 주소 단위인 4바이트 단위를 통째로 지정해 주기 때문에 저장될 공간의 가장 낮은 주소값에 *esp를 지정하고 값을 할당해 주면 되므로 argument의 push 순서 외에 따로 고려해 줄 사항은 없었습니다.
+
+마지막으로 주소 배열의 첫 주소와 전체 argument의 갯수를 push하고, return address를 0으로 초기화해 주면 stack이 완전히 setup됩니다.
+
+문자열을 스택에 복사하는 데 임시로 할당하는 arg_addr과 fn_copy와 같은 스트링 배열은 더이상 필요하지 않으므로 리소스 해제를 하고 argument passing의 구현을 완료하였습니다.
+
+스택 페이지는 애초에 4KB로 고정되어 인스톨합니다. 이 프로젝트에서는 stack grow는 구현하지 않으므로 arguments들의 총 길이가 single page를 넘지 않는다는 전제가 있어야 합니다.(물론 주소를 저장하는 값과  그러므로 이러한 전제 하에서 스택 페이지의 오버플로우는 일어나지 않을 것이라 보장할 수 있습니다. 현재는 구현되어 있지 않지만 이를 위해 애초에 cmdline을 받을 때 길이 제한을 두고 아예 load를 reject하는 것도 하나의 방법이라 할 수 있겠습니다.
+
+
+---- RATIONALE ----
+
+>> A3: Why does Pintos implement strtok_r() but not strtok()?
+
+strtok()는 파싱하는 동안 정적 버퍼를 사용하기 때문에 thread safe이지 않습니다. 즉 각각의 thread에서 share할 수 있기 때문에 synchronization problem이 발생할 수 있습니다. 그러므로 여러 쓰레드가 동시에 exec을 수행하고 문자열 파싱을 수행할 때 버퍼에 잘못된 값이 덮어씌워질 수 있는 위험이 있는 것입니다. strtok_r은 유저에 각각 할당되는 포인터를 사용하기 때문에 (우리 코드에서는 char* save_ptr을 선언해 세 번째 인자에 넣어줌) 여러 thread가 동시에 실행되어도 race가 일어나지 않고 원하는 값을 보장해줄 수 있습니다.
+
+>> A4: In Pintos, the kernel separates commands into a executable name
+>> and arguments.  In Unix-like systems, the shell does this
+>> separation.  Identify at least two advantages of the Unix approach.
+
+1. 여러 개의 executable file을 동시에 실행시킬 때, 오버헤드가 적습니다.
+Shell 자체는 User level의 프로그램이기 때문에 argument parsing을 하기 위해 커널 모드에 진입할 필요가 없습니다. 커널 모드에 진입하기 위해서는 Address Space와 각종 register들, hardware status가 바뀌어야 하기 때문에 오버헤드가 큰데, User level process인 shell에서 이 과정을 맡아준다면 훨씬 적은 오버헤드로 많은 프로그램을 동시에 실행시킬 수 있을 것입니다.
+
+2. 더 안전합니다.
+또한 argument parsing을 할 때 메모리에 접근하면서 오류가 발생해도 user pointer에 의한 오류이므로 exception handling을 통해 복구할 가능성이 있습니다. 그런데 커널 모드에서 메모리 참조 오류가 발생하면 바로 kernel bug로 이어지므로 치명적인 문제로 간주될 위험성이 더 큽니다.
+
+			     SYSTEM CALLS
+			     ============
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+/* thread.h */
+struct thread
+  {
+
+#ifdef USERPROG
+    /* Owned by userprog/process.c. */
+    uint32_t *pagedir;      /* Page directory. */
+#endif
+    struct list child_list;
+    int proc_status;
+
+    /* File Descriptor Table */
+    int fd_num;
+    struct list file_list;
+
+    struct thread *parent;
+    int is_child_load;
+    struct semaphore sema;
+
+  };
+
+Thread Control Block을 나타내는 구조체에 파일 디스크립터 테이블과 parent process로의 포인터, 
+exec으로 child process를 생성할 경우 이들의 정보(wait할 때 리턴할 status와 exit했는지의 여부 등)를 알 수 있도록 하는 child list, 
+자신의 child가 완전히 로드되었는지(혹은 실패 여부)를 표시하는 flag 변수, 
+child를 waiting할 때 자신을 block할 수 있는 세마포어 변수를 멤버로 추가하였습니다.
+
+
+/* syscall.h */
+
+struct file_elem {
+    struct file *name;
+    int fd;
+    char filename[15];
+    struct list_elem elem;
+
+};
+thread의 file list에 들어가는 element들을 file_elem이라는 구조체로 정의하였습니다.
+파일 구조체로의 참조 포인터는 file system 함수의 인자로 사용하기 위해 필요하며
+execute하고 있는 파일을 확인하기 위해 access하는 파일의 이름을 추가하였고, 
+file descriptor number 에 해당하는 멤버로 구성되어 있습니다.
+
+struct child_elem {
+	struct list_elem elem;
+	int exit;
+	int status;
+	tid_t pid;
+	int load;
+	bool waited;
+    struct thread *TCB;
+};
+thread의 child list에 들어가는 element들 또한 child_elem이라는 구조체로 정의하였고,
+exit, load했는지 여부를 알려주는 flag, wait하는 경우에 전달받는 status value, pid, wait call이 parent로부터 한 번이라도 불렸는지 여부를 알려주는 flag, 
+그리고 parent에서 child의 TCB로 접근할 수 있도록 하는 포인터를 소유하고 있습니다. 
+
+/* syscall.c */
+
+struct lock filesys_lock
+
+file system 자체에서 internal한 synchronization이 이루어지지 않고 있기 때문에, filesys_lock을 전체 시스템 콜 환경 안에 global context로 저장하고 각각의 시스템 콜(create, remove, open, close, read, write, exec)에서 acquire, release할 수 있도록 하여, 한 번에 하나의 프로세스만 파일 시스템을 사용하는 시스템 콜을 부를 수 있도록 했습니다.
+
+>> B2: Describe how file descriptors are associated with open files.
+>> Are file descriptors unique within the entire OS or just within a
+>> single process?
+
+User가 파일을 사용할 수 있는 것은 open() 시스템 콜에 의해서입니다. file list는 쓰레드 스트럭쳐 안에 존재하고 쓰레드가 처음 생성될 때 초기화됩니다. 그러므로 open system call handler에서 각 쓰레드에서 관리하고 있는 파일 디스크립터 번호를 포함한 파일 정보를 file_elem 구조체로 할당해 리스트에 추가해준 후, open한 file을 read, write system call에 의해 요청한 파일 디스크립터에 매핑되어 있는 파일에 접근해 원하는 동작을 할 수 있게 됩니다. close system call에서는 파일 시스템에 파일의 종료를 요청하는 것 뿐만 아니라, 자신의 파일 리스트에 접근하여 파일 정보 스트럭쳐를 리소스 해제해 주고 리스트에서 제거하는 과정을 수행합니다.
+
+파일 디스크립터는 하나의 프로세스에 속한 것이기 때문에 각각의 프로세스 안에서는 유일하지만 전체 운영체제 시스템 안에서는 중복된 값이 할당될 수도 있습니다.
+
+---- ALGORITHMS ----
+
+>> B3: Describe your code for reading and writing user data from the
+>> kernel.
+커널을 통해 데이터를 읽고 쓰는 과정은 시스템 콜을 통해 이루어진다. 
+User가 직접적으로 커널의 Address Space에 접근할 수 없으므로, 유저는 시스템 콜이라는 커널과 유저 간 인터페이스를 통해
+커널에 데이터를 읽고 쓰기를 요청한다. User code의 library로 정의된 system call은 into 어셈블리 명령을 통해 인터럽트를 발생시키고(0x30) interrupt Service Routine에 의해 등록된 커널 코드의 system call handler가 실행될 수 있다. 각각의 system call number에 매칭되는 시스템 콜 핸들러를 이번 프로젝트에서 구현했고, 이 중 read()와 write() 시스템 콜은 buffer에 대한 포인터와 파일 디스크립터, 버퍼 사이즈를 이용하여 파일의 데이터를 버퍼에 기록하거나 반대로 버퍼의 데이터를 파일에 기록하는 동작을 한다. user가 제공한 buffer의 포인터가 유효한지를 검사하기 위해 주소가 user virtual address인지, NULL pointer인지 여부, 페이지 디렉토리/테이블 엔트리에 존재하는지를 먼저 확인하고 본격적인 동작을 수행한다.
+
+이 시스템 콜은 파일에 읽고 쓰는 동작 뿐만 아니라 콘솔에 문자를 출력하거나 키보드로부터 문자를 입력받는 동작도 수행한다. 이것은 putbuf()또는 input_getc() 와 같은 또다른 커널 함수를 사용하여 이루어진다.
+
+동작이 성공하면 eat 레지스터에 유저 코드의 리턴값으로 넘겨질 read/write byte size를 저장하고 핸들러를 종료한다.
+
+>> B4: Suppose a system call causes a full page (4,096 bytes) of data
+>> to be copied from user space into the kernel.  What is the least
+>> and the greatest possible number of inspections of the page table
+>> (e.g. calls to pagedir_get_page()) that might result?  What about
+>> for a system call that only copies 2 bytes of data?  Is there room
+>> for improvement in these numbers, and how much?
+
+만약 모든 데이터가 하나의 페이지 안에 저장되어 있는 경우에는 단 한 번의 inspection만이 필요할 수 있다. (pointer가
+valid한지 검사하지 않는다고 가정하면) memcpy 함수가 한 번의 pagedir_get_page()에 의해 리턴된 포인터를 사용할 것이고,
+이것이 유일한 이 함수의 호출이 되기 때문이다.
+
+가장 많은 inspection이 필요한 경우는 4096번이 될 것이다. 즉, 각각의 데이터가 한 바이트씩 각기 다른 페이지에 분산되어 있는 경우이다. 각각의 한 바이트에 대해 pagedir_get_page() 함수의 호출이 필요할 것이기 때문이다.
+
+2바이트의 데이터에 경우 또한 최선의 경우는 1번(2 바이트가 모두 하나의 페이지에 존재할 경우)일 것이고, 최악의 경우는 각각의 바이트가 다른 페이지에 저장되어 있을 경우인 2번이 될 것이다.
+
+데이터가 많은 페이지들에 분산되어 있을수록 성능이 저하되기 때문에, 그리고 더 큰 크기의 데이터를 복사할수록 이러한 위험성은 커지기 때문에, data를 user space에 저장하는 과정에서 한번에 읽고자 하는 데이터는 같은 페이지에 쓰여질 수 있도록 하는 하드웨어적인 최적화 과정이 필요하다고 여겨진다.
+">> B5: Briefly describe your implementation of the "wait" system call
+>> and how it interacts with process termination.
+
+부모 프로세스가 자식 프로세스의 종료를 기다리고 그것의 status를 알 필요가 있을 때 wait system call을 부를 것이다.
+
+이것은 process.c에 정의된 process_wait 함수에 의해 수행되는데, 인자로 받은 child의 pid를 이용해서 자신의 child list에 있는 자식 프로세스 정보 구조체를 불러올 수 있다.
+만약 직계 자식이 아닌 쓰레드의 pid가 들어오거나, 이전에 같은 pid에 대해 wait call을 불렀던 경우에는 단순히 바로 -1을 리턴하고 종료할 것이고, 자신의 자식이라면 이 자식이 종료되었는지 아닌지를 확인할 것이다.
+
+자식이 이미 종료된 경우라면 저장된 status를 리턴하고 종료하면 되지만, 
+자식이 종료하지 않았을 경우에는 스스로를 block하고 자식이 종료될 때까지 기다려야 한다. 이를 구현하기 위해
+쓰레드 블록마다 하나씩 initialize한 semaphore를 이용하였다. 자식의 쓰레드 블록에 있는 세마포어에 접근하여 이를 sema_down시킨다. semaphore의 값은 처음부터 0으로 초기화시켰기 때문에 부모 프로세스는 바로 블록할 것이고, child process가 process_exit을 수행할 때 마지막에 sema_up을 할 것이기 때문에 그 때 비로소 부모 프로세스가 status를 전달하며 리턴할 수 있게 된다. 또한 자신의 child list에서 exit하였음을 ‘확인한’ 자식을 제거하고 할당한 구조체를 free해주도록 하였다. 즉, 이 함수의 주요한 동작은 child process의 semaphore를 이용하여 자식의 termination을 확인하고 synchronization 하는 것이다.
+
+>> B6: Any access to user program memory at a user-specified address
+>> can fail due to a bad pointer value.  Such accesses must cause the
+>> process to be terminated.  System calls are fraught with such
+>> accesses, e.g. a "write" system call requires reading the system
+>> call number from the user stack, then each of the call's three
+>> arguments, then an arbitrary amount of user memory, and any of
+>> these can fail at any point.  This poses a design and
+>> error-handling problem: how do you best avoid obscuring the primary
+>> function of code in a morass of error-handling?  Furthermore, when
+>> an error is detected, how do you ensure that all temporarily
+>> allocated resources (locks, buffers, etc.) are freed?  In a few
+>> paragraphs, describe the strategy or strategies you adopted for
+>> managing these issues.  Give an example.
+
+User로부터 받은 포인터는 항상 valid한지 검사하는 과정을 거친다. 만약 이것이 mapping되어 있지 않은 
+메모리 영역을 가리키거나, kernel 영역을 가리킨다면 page fault에 들어가기 이전에 exit(-1)을 통해
+종료되도록 하였다. 
+즉, user stack에 저장되어 있는 argument를 받아올 때마다 스택 포인터 자체의 유효성을 검사하고,
+만약 포인터 변수를 받아온다면 그것이 올바른 메모리 영역을 가리키고 있는지를, 버퍼를 받아온다면 그 버퍼가 점유하고 있는
+모든 메모리 영역의 유효성을 시스템 콜 코드 내에서 지속적으로 검사해 주는 것이다. 이러한 과정을 좀더 효율적으로 하기 위해 userptr_valid, userbuf_valid라는 함수를 새로 정의하여 확인하도록 하였다. 이것들은 단순히 인자로 주어진
+포인터가 valid한지를 판단하여 참, 거짓을 반환하는데, 이 결과에서 거짓이 나오면 반드시 exit(-1) 시스템 콜을 
+부르게 되어 있다. 이것은 process_exit() 함수로 연결되는데, 이때 이 프로세스가 가지고 있는 file_list와
+child_list를 검사하여 아직 열려 있는 파일이나 wait 되지 않은 child가 있어도 이들을 모두 free하고 종료하도록
+하였다. 그러므로 메모리 누수가 발생하지 않는다.
+
+---- SYNCHRONIZATION ----
+
+>> B7: The "exec" system call returns -1 if loading the new executable
+>> fails, so it cannot return before the new executable has completed
+>> loading.  How does your code ensure this?  How is the load
+>> success/failure status passed back to the thread that calls "exec"?
+
+process_execute가 load의 success 여부를 전달받은 후 즉시 block시키는 것으로 이러한 문제를 해결할 수 있다.
+블록된 parent process는 child의 loading이 완전히 끝난 후 child에 의해 unblock될 수 있고(start_process 
+kernel function에 구현하였다) load의 성공 여부를 확인하여 load에서 fail이 발생하였을 시 비정상 종료 값인 
+-1을 리턴하고 이 child의 exec이 실패했음을 통보할 수 있다.
+
+>> B8: Consider parent process P with child process C.  How do you
+>> ensure proper synchronization and avoid race conditions when P
+>> calls wait(C) before C exits?  After C exits?  How do you ensure
+>> that all resources are freed in each case?  How about when P
+>> terminates without waiting, before C exits?  After C exits?  Are
+>> there any special cases?
+
+C가 exit하기 전에 P가 wait을 부르면, P는 일단 child의 TCB에 접근해서 C의 쓰레드 블록에 있는 세마포어를 down시키고
+블록된다. child의 semaphore를 사용하는 이유는 P가 여러 개의 child를 한 번에 기다릴 수도 있기 때문이다. 그러므로 C가 exit할 때 Parent가 자신을 기다리고 있는지를 sema.waiters list를 확인함으로써 알 수 있고 기다리고 있는 부모가 있다면 sema_up을 호출함으로써 부모를 unblock시키고 종료하게 된다.
+
+C가 exit한 후에 P가 wait을 부르면, P가 sema_down을 하기 전에 child가 exit하였는지를 child list에 있는 child_elem을 통해 알 수 있으므로 sema_down을 하지 않고 저장된 status를 통해 바로 리턴하게 된다.
+
+P가 wait을 하지 않고 종료한다면 C는 orphaned process가 되는데, process_exit에서 이 경우를 다루어 주기 위해 모든 child list에 남아있는 child_elem의 TCB 포인터를 통해 실제 이들의 쓰레드 블록으로 접근해서, 그들의 parent를 NULL로 만들어 준다. 그러므로 child는 자신의 parent가 먼저 종료되었음을 알고 자신의 status와 exit여부를 부모에게 통보하지 않아도 된다. 어차피 open file과 child list의 element들은 각자 프로세스가 종료할 때 free해주기 때문에 사용한 리소스는 결국에는 모두 free되게 된다. C가 exit한 후에 P가 wait을 하지 않고 종료하는 경우에도, child가 남긴 status를 사용하지 않는 것 뿐이지 프로세스의 스케줄링이나 리소스 관리에 문제가 발생하지는 않는다. 즉, parent가 child의 resource를 따로 정리해주는 것이 아니라 단순히 child의 종료 status만을 전달받아 출력해 주는 것이기 때문에 parent와 child가 어떤 순서로 종료되든지간에 문제가 발생하지 않는 것이다.
+
+---- RATIONALE ----
+
+>> B9: Why did you choose to implement access to user memory from the
+>> kernel in the way that you did?
+
+우리는 유저 메모리에 엑세스 하기 전에 주소가 유효한지를 먼저 확인하는 방법을 사용하였다. 사실 2번째 방법을 구현하기엔 page fault에 대한 막연한 두려움이 컸고 pints document에서 제시한 함수를 잘 이해하지 못 했기에 첫 번째 방법을 사용하였다. 하지만 프로젝트 2를 끝낸 지금 시점에서 다시 생각해보면 왜 2번째 방법이 더 효율적이고 많은 OS에서 사용하는지 이해가 되었다. 우리가 사용하는 엑세스 전에 유효한지 확인하는 방법은 매번 주소가 유효한지 계속 확인해줘야 한다. 하지만 2번째 방법을 사용하면 오류가 났을 때만 확인을 하면 되므로 오버헤드가 줄어드는 장점이 있다.  
+
+>> B10: What advantages or disadvantages can you see to your design
+>> for file descriptors?
+
+kernel space를 사용하지 않고 user space를 사용한다. 따라서 file이 많아져도 kernel space가 부족하여 오류가 생길 일이 없다. 또한 각각의 process가 자기 자신의 file만 신경쓰면 되므로 resource를 관리하기 쉽다. 
+
+TCB가 커져 버린다. 또한 kernel이 오픈된 file을 모르기 때문에 resource가 누수되면 어디서 누수되는지 찾기 어렵다. 
+
+
+>> B11: The default tid_t to pid_t mapping is the identity mapping.
+>> If you changed it, what advantages are there to your approach?
+
+바꾸지 않았다. 바꿀 필요를 못 느꼈다. 
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter. 
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+멀티-옴에서 너무 많은 디버깅이 걸렸습니다. 뭔가 multi-oom같은 무식한 방법이 아닌 뭔가 좀비 thread나 orphan thread의 경우에 대해 test하는 좀더 세밀화된 test가 필요한 것 같습니다. 
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+virtual memory에 대한 명확한 구조와 어떻게 user virtual memory가 kernel virtual memory에 mapping되는지에 대한 명확한 설명이 필요합니다. pintos 도큐먼트에 있는 설명은 너무 많은 것들이 생략되어 있고 오해의 소지가 너무 많습니다. 
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?
